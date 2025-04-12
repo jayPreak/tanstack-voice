@@ -10,7 +10,6 @@ interface Message {
   role: string;
   content: string;
   audioUrl?: string;
-  isPlaying?: boolean;
   timestamp: Date;
 }
 
@@ -20,15 +19,25 @@ function VoiceChat() {
   const [isListening, setIsListening] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
   const [currentAudio, setCurrentAudio] = useState<string | null>(null)
+  const [audioProgress, setAudioProgress] = useState(0)
   
   const wsRef = useRef<WebSocket | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null)
+  const audioChunksRef = useRef<ArrayBuffer[]>([])
   
   useEffect(() => {
     // Create audio element for playing responses
     const audioEl = new Audio();
-    audioEl.onended = () => setCurrentAudio(null);
+    audioEl.onended = () => {
+      setCurrentAudio(null);
+      setAudioProgress(0);
+    };
+    audioEl.ontimeupdate = () => {
+      if (audioEl.duration) {
+        setAudioProgress((audioEl.currentTime / audioEl.duration) * 100);
+      }
+    };
     audioPlayerRef.current = audioEl;
     
     return () => {
@@ -61,9 +70,10 @@ function VoiceChat() {
       }
       
       ws.onmessage = (event) => {
+        console.log({event})
         try {
           const data = JSON.parse(event.data)
-          console.log('Received:', data)
+          console.log('Received:', data.type)
           
           // Handle different event types
           if (data.type === 'system') {
@@ -91,6 +101,61 @@ function VoiceChat() {
               }
               return newMessages
             })
+          }
+          else if (data.type === 'response.audio.delta') {
+            // Handle audio response from OpenAI
+            if (data.delta) {
+              try {
+                // Convert base64 to an audio buffer
+                const audioData = atob(data.delta);
+                const arrayBuffer = new ArrayBuffer(audioData.length);
+                const view = new Uint8Array(arrayBuffer);
+                for (let i = 0; i < audioData.length; i++) {
+                  view[i] = audioData.charCodeAt(i);
+                }
+                
+                // Store the audio chunk
+                audioChunksRef.current.push(arrayBuffer);
+                
+                // If this is the first chunk, add a message for the assistant
+                if (audioChunksRef.current.length === 1) {
+                  setMessages(prev => [
+                    ...prev, 
+                    { 
+                      role: 'assistant', 
+                      content: '🔊 Voice Response',
+                      timestamp: new Date()
+                    }
+                  ]);
+                }
+              } catch (error) {
+                console.error('Error processing audio chunk:', error);
+              }
+            }
+          }
+          else if (data.type === 'response.audio.done') {
+            // When audio is complete, combine all chunks and create a playable URL
+            if (audioChunksRef.current.length > 0) {
+              const combinedBuffer = new Blob(audioChunksRef.current, { type: 'audio/wav' });
+              const audioUrl = URL.createObjectURL(combinedBuffer);
+              
+              // Update the assistant's message with the audio URL
+              setMessages(prev => {
+                const newMessages = [...prev];
+                const lastAssistantIndex = [...newMessages].reverse().findIndex(m => m.role === 'assistant');
+                if (lastAssistantIndex !== -1) {
+                  const actualIndex = newMessages.length - 1 - lastAssistantIndex;
+                  newMessages[actualIndex] = {
+                    ...newMessages[actualIndex],
+                    audioUrl: audioUrl
+                  };
+                }
+                return newMessages;
+              });
+              
+              // Reset audio chunks for next response
+              audioChunksRef.current = [];
+            }
           }
           else if (data.type === 'error') {
             setStatus(`Error: ${data.message}`)
@@ -134,12 +199,13 @@ function VoiceChat() {
     
     // Request to play the sample audio file
     wsRef.current.send(JSON.stringify({
-      type: 'play_sample'
+      type: 'play_sample',
+      filename: 'harvard.wav' // Specify the filename to the server
     }))
   }
   
   // Play recorded audio
-  const playAudio = (url) => {
+  const playAudio = (url: string) => {
     if (!audioPlayerRef.current) return;
     
     if (currentAudio === url) {
@@ -147,6 +213,7 @@ function VoiceChat() {
       audioPlayerRef.current.pause();
       audioPlayerRef.current.currentTime = 0;
       setCurrentAudio(null);
+      setAudioProgress(0);
     } else {
       // Stop any currently playing audio
       if (currentAudio) {
@@ -207,6 +274,9 @@ function VoiceChat() {
             audioUrl: audioUrl,
             timestamp: new Date()
           }])
+          
+          // Reset the OpenAI audio chunks before sending new audio
+          audioChunksRef.current = [];
           
           // Send to WebSocket server
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -269,8 +339,6 @@ function VoiceChat() {
   const formatTime = (date: Date) => {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
-
-  console.log({messages})
   
   // Clean up on unmount
   useEffect(() => {
@@ -285,7 +353,7 @@ function VoiceChat() {
       
       // Revoke object URLs to prevent memory leaks
       messages.forEach(msg => {
-        if (msg.audioUrl && msg.audioUrl !== '#sample') {
+        if (msg.audioUrl && !msg.audioUrl.startsWith('/')) {
           URL.revokeObjectURL(msg.audioUrl);
         }
       });
@@ -359,13 +427,14 @@ function VoiceChat() {
           <div 
             key={index} 
             style={{
-              margin: '8px 0',
-              padding: '10px',
-              borderRadius: '8px',
+              margin: '12px 0',
+              padding: '12px',
+              borderRadius: '12px',
               maxWidth: '80%',
-              backgroundColor: msg.role === 'user' ? '#e3f2fd' : '#f1f8e9',
+              backgroundColor: msg.role === 'user' ? '#DCF8C6' : '#EAEAEA', // WhatsApp-style colors
               marginLeft: msg.role === 'user' ? 'auto' : '0',
               marginRight: msg.role === 'assistant' ? 'auto' : '0',
+              boxShadow: '0 1px 2px rgba(0,0,0,0.1)'
             }}
           >
             <div style={{ 
@@ -380,50 +449,52 @@ function VoiceChat() {
             </div>
             
             {msg.audioUrl ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <button
-                  onClick={() => msg.audioUrl !== '#sample' && playAudio(msg.audioUrl)}
-                  style={{
-                    width: '36px',
-                    height: '36px',
-                    borderRadius: '50%',
-                    backgroundColor: currentAudio === msg.audioUrl ? '#f44336' : '#2196F3',
-                    color: 'white',
-                    border: 'none',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    cursor: msg.audioUrl !== '#sample' ? 'pointer' : 'not-allowed',
-                    fontSize: '16px'
-                  }}
-                >
-                  {currentAudio === msg.audioUrl ? '■' : '▶'}
-                </button>
-                <div style={{ 
-                  flex: 1, 
-                  height: '36px', 
-                  backgroundColor: '#e0e0e0',
-                  borderRadius: '18px',
-                  position: 'relative',
-                  overflow: 'hidden'
-                }}>
-                  <div style={{
-                    position: 'absolute',
-                    top: '0',
-                    left: '0',
-                    height: '100%',
-                    width: currentAudio === msg.audioUrl ? '100%' : '0',
-                    backgroundColor: '#bbdefb',
-                    transition: 'width 0.1s linear'
-                  }}></div>
-                  <div style={{
-                    position: 'absolute',
-                    top: '50%',
-                    left: '15px',
-                    transform: 'translateY(-50%)',
-                    zIndex: 1
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div>{msg.content}</div>
+                
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <button
+                    onClick={() => playAudio(msg.audioUrl!)}
+                    style={{
+                      width: '36px',
+                      height: '36px',
+                      borderRadius: '50%',
+                      backgroundColor: currentAudio === msg.audioUrl ? '#f44336' : '#0B93F6',
+                      color: 'white',
+                      border: 'none',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      fontSize: '16px'
+                    }}
+                  >
+                    {currentAudio === msg.audioUrl ? '■' : '▶'}
+                  </button>
+                  
+                  <div style={{ 
+                    flex: 1, 
+                    position: 'relative',
                   }}>
-                    <span>{msg.content}</span>
+                    {/* Background track */}
+                    <div style={{
+                      height: '4px',
+                      backgroundColor: '#E0E0E0',
+                      borderRadius: '2px',
+                      width: '100%'
+                    }}></div>
+                    
+                    {/* Progress overlay */}
+                    <div style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      height: '4px',
+                      width: `${currentAudio === msg.audioUrl ? audioProgress : 0}%`,
+                      backgroundColor: '#0B93F6',
+                      borderRadius: '2px',
+                      transition: 'width 0.1s linear'
+                    }}></div>
                   </div>
                 </div>
               </div>
