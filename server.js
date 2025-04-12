@@ -4,95 +4,88 @@ import dotenv from 'dotenv';
 import { createServer } from 'http';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
-// Load environment variables from .env file
+// Load environment variables
 dotenv.config();
 
-// Create HTTP server to serve a simple HTML client
+// Get current directory for file paths
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Create HTTP server
 const httpServer = createServer((req, res) => {
-  if (req.url === '/') {
-    // Serve a basic HTML page for testing
-    fs.readFile(path.join(process.cwd(), 'client.html'), (err, data) => {
-      if (err) {
-        res.writeHead(500);
-        res.end('Error loading client.html');
-        return;
-      }
-      res.writeHead(200, { 'Content-Type': 'text/html' });
-      res.end(data);
-    });
-  } else {
-    res.writeHead(404);
-    res.end('Not found');
-  }
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('WebSocket server is running');
 });
 
-// Create WebSocket server attached to the HTTP server
+// Create WebSocket server
 const wss = new WebSocketServer({ server: httpServer });
 
-// Store active connections
-const clients = new Map();
+// Function to encode audio file to base64
+function encodeAudioFileToBase64(filePath) {
+  try {
+    const audioData = fs.readFileSync(filePath);
+    return audioData.toString('base64');
+  } catch (error) {
+    console.error('Error reading audio file:', error);
+    return null;
+  }
+}
 
 wss.on('connection', (ws) => {
   const clientId = Date.now();
-  clients.set(clientId, { ws, openaiWs: null });
-  
   console.log(`Client connected (ID: ${clientId})`);
+  
+  let openaiWs = null;
   
   // Send welcome message
   ws.send(JSON.stringify({
     type: 'system',
-    message: 'Connected to WebSocket proxy for OpenAI Realtime API',
-    clientId: clientId
+    message: 'Connected to WebSocket proxy for OpenAI'
   }));
   
-  // Handle messages from the client
   ws.on('message', async (message) => {
     try {
       const data = JSON.parse(message.toString());
       console.log(`Received from client ${clientId}:`, data.type);
-      console.log(data.type)
-      
-      // Get the client's state
-      const clientState = clients.get(clientId);
       
       if (data.type === 'connect') {
-        // Check if API key is available
+        // Check for API key
         const apiKey = process.env.OPENAI_API_KEY;
         if (!apiKey) {
           ws.send(JSON.stringify({
             type: 'error',
-            message: 'OpenAI API key is not configured. Please add it to the .env file.'
+            message: 'OpenAI API key is not configured'
           }));
           return;
         }
         
         // Close existing connection if any
-        if (clientState.openaiWs) {
-          clientState.openaiWs.close();
-          clientState.openaiWs = null;
+        if (openaiWs) {
+          openaiWs.close();
+          openaiWs = null;
         }
         
         console.log(`Connecting to OpenAI for client ${clientId}`);
         
-        // Connect to OpenAI's WebSocket API
-        const openaiWs = new WebSocket('wss://api.openai.com/v1/audio/speech', {
+        // Connect to OpenAI's Realtime API
+        const url = 'wss://api.openai.com/v1/realtime';
+        
+        openaiWs = new WebSocket(url, {
           headers: {
-            'Authorization': `Bearer ${apiKey}`
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
           }
         });
         
-        // Store the OpenAI WebSocket connection
-        clientState.openaiWs = openaiWs;
-        
-        // Handle OpenAI WebSocket events
         openaiWs.on('open', () => {
           console.log(`Connected to OpenAI for client ${clientId}`);
           ws.send(JSON.stringify({
             type: 'openai.connected'
           }));
           
-          // Initialize session with OpenAI
+          // Initialize session
           openaiWs.send(JSON.stringify({
             type: 'session.update',
             session: {
@@ -103,16 +96,9 @@ wss.on('connection', (ws) => {
         });
         
         openaiWs.on('message', (openaiMessage) => {
-          // Forward messages from OpenAI to client
+          // console.log(`OpenAI message received: ${openaiMessage.toString().substring(0, 100)}...`);
+          console.log(`OpenAI message received: ${openaiMessage.toString()}...`);
           ws.send(openaiMessage.toString());
-          
-          // Log OpenAI events for debugging
-          try {
-            const parsed = JSON.parse(openaiMessage.toString());
-            console.log(`OpenAI event for client ${clientId}:`, parsed.type);
-          } catch (e) {
-            // Non-JSON message, ignore
-          }
         });
         
         openaiWs.on('close', (code, reason) => {
@@ -122,7 +108,7 @@ wss.on('connection', (ws) => {
             code,
             reason: reason.toString()
           }));
-          clientState.openaiWs = null;
+          openaiWs = null;
         });
         
         openaiWs.on('error', (error) => {
@@ -132,11 +118,58 @@ wss.on('connection', (ws) => {
             message: 'Error in OpenAI connection: ' + error.message
           }));
         });
-      } 
-      else if (clientState.openaiWs && clientState.openaiWs.readyState === WebSocket.OPEN) {
+      }
+      else if (data.type === 'play_sample') {
+        // Check if we're connected to OpenAI
+        if (!openaiWs || openaiWs.readyState !== WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'error',
+            message: 'Not connected to OpenAI'
+          }));
+          return;
+        }
+        
+        // Path to sample audio file
+        const samplePath = path.join(__dirname, 'public', 'sample.wav');
+        console.log(`Reading sample file from: ${samplePath}`);
+        
+        // Encode the audio file to base64
+        const base64Audio = encodeAudioFileToBase64(samplePath);
+        if (!base64Audio) {
+          ws.send(JSON.stringify({
+            type: 'error',
+            message: 'Failed to read sample audio file'
+          }));
+          return;
+        }
+        
+        console.log('Sample audio file encoded, sending to OpenAI...');
+        
+        // Send the audio to OpenAI
+        openaiWs.send(JSON.stringify({
+          type: 'input_audio_buffer.append',
+          audio: base64Audio
+        }));
+        
+        // Commit the audio and request a response
+        openaiWs.send(JSON.stringify({
+          type: 'input_audio_buffer.commit'
+        }));
+        
+        openaiWs.send(JSON.stringify({
+          type: 'response.create'
+        }));
+        
+        // Notify the client
+        ws.send(JSON.stringify({
+          type: 'system',
+          message: 'Sample audio sent to OpenAI'
+        }));
+      }
+      else if (openaiWs && openaiWs.readyState === WebSocket.OPEN) {
         // Forward the message to OpenAI
-        clientState.openaiWs.send(message.toString());
-      } 
+        openaiWs.send(message.toString());
+      }
       else {
         ws.send(JSON.stringify({
           type: 'error',
@@ -152,51 +185,15 @@ wss.on('connection', (ws) => {
     }
   });
   
-  // Handle client disconnection
   ws.on('close', () => {
     console.log(`Client disconnected (ID: ${clientId})`);
-    
-    // Close the OpenAI connection if it exists
-    const clientState = clients.get(clientId);
-    if (clientState && clientState.openaiWs) {
-      clientState.openaiWs.close();
-    }
-    
-    // Remove the client from the map
-    clients.delete(clientId);
-  });
-  
-  // Handle client errors
-  ws.on('error', (error) => {
-    console.error(`Error in client connection ${clientId}:`, error);
-  });
-});
-
-// Start the server
-const PORT = process.env.PORT || 8080;
-httpServer.listen(PORT, () => {
-  console.log(`WebSocket server is running on ws://localhost:${PORT}`);
-  console.log(`HTTP server is running on http://localhost:${PORT}`);
-});
-
-// Handle server shutdown
-process.on('SIGINT', () => {
-  console.log('Shutting down server...');
-  
-  // Close all client connections
-  for (const [clientId, { ws, openaiWs }] of clients.entries()) {
     if (openaiWs) {
       openaiWs.close();
     }
-    ws.close();
-  }
-  
-  // Close the WebSocket server
-  wss.close(() => {
-    console.log('WebSocket server closed');
-    httpServer.close(() => {
-      console.log('HTTP server closed');
-      process.exit(0);
-    });
   });
+});
+
+const PORT = process.env.PORT || 8080;
+httpServer.listen(PORT, () => {
+  console.log(`WebSocket server running on ws://localhost:${PORT}`);
 });

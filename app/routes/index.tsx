@@ -15,42 +15,33 @@ function VoiceChat() {
   const wsRef = useRef<WebSocket | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
+  const audioPlayerRef = useRef<HTMLAudioElement | null>(null)
   
-  // Check if OpenAI API is configured
   useEffect(() => {
-    fetch('/api/openai')
-      .then(res => res.json())
-      .then(data => {
-        if (data.error) {
-          setStatus(`Error: ${data.error}`)
-        } else {
-          setStatus('Ready to connect')
-        }
-      })
-      .catch(err => {
-        setStatus(`Error checking API: ${err.message}`)
-      })
+    // Create audio element for playing responses
+    if (!audioPlayerRef.current) {
+      const audioEl = new Audio();
+      audioEl.autoplay = false;
+      audioPlayerRef.current = audioEl;
+    }
+    
+    setStatus('Ready to connect to WebSocket server')
   }, [])
   
-
   const connectWebSocket = async () => {
-    console.log("hii")
     try {
-      setStatus('Connecting to WebSocket proxy...')
+      setStatus('Connecting to WebSocket server...')
       
-      // Connect to our local WebSocket proxy
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-      console.log({protocol})
-      const wsUrl = `${protocol}//${window.location.host}/ws/openai`
-
-      console.log({wsUrl})
+      // Connect to the standalone WebSocket server at localhost:8080
+      const wsUrl = 'ws://localhost:8080'
+      console.log('Connecting to:', wsUrl)
       
       // Create WebSocket connection
       const ws = new WebSocket(wsUrl)
       wsRef.current = ws
       
       ws.onopen = () => {
-        setStatus('Connected to proxy, initializing OpenAI...')
+        setStatus('Connected to WebSocket server, initializing OpenAI...')
         
         // Request connection to OpenAI
         ws.send(JSON.stringify({
@@ -66,7 +57,10 @@ function VoiceChat() {
           console.log('Received:', data)
           
           // Handle different event types
-          if (data.type === 'openai.connected') {
+          if (data.type === 'system') {
+            setStatus(data.message)
+          }
+          else if (data.type === 'openai.connected') {
             setIsConnected(true)
             setStatus('Connected to OpenAI')
           }
@@ -85,25 +79,74 @@ function VoiceChat() {
               return newMessages
             })
           }
+          else if (data.type === 'response.audio.delta') {
+            // Handle audio response from OpenAI
+            if (data.delta && audioPlayerRef.current) {
+              try {
+                // Convert base64 to an audio blob
+                const audioData = atob(data.delta);
+                const arrayBuffer = new ArrayBuffer(audioData.length);
+                const view = new Uint8Array(arrayBuffer);
+                for (let i = 0; i < audioData.length; i++) {
+                  view[i] = audioData.charCodeAt(i);
+                }
+                const blob = new Blob([arrayBuffer], { type: 'audio/wav' });
+                const url = URL.createObjectURL(blob);
+                
+                // Play the audio
+                audioPlayerRef.current.src = url;
+                audioPlayerRef.current.play();
+              } catch (error) {
+                console.error('Error playing audio:', error);
+              }
+            }
+          }
           else if (data.type === 'error') {
             setStatus(`Error: ${data.message}`)
           }
-          // Handle other event types
         } catch (error) {
           console.error('Error parsing message:', error)
         }
       }
       
-      // Rest of the function remains the same
+      ws.onclose = () => {
+        setIsConnected(false)
+        setStatus('Disconnected from WebSocket server')
+      }
+      
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error)
+        setStatus('WebSocket connection error')
+      }
     } catch (error) {
       console.error('Error connecting:', error)
       setStatus(`Connection error: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
+  
+  // Function to send sample audio file
+  const playSampleAudio = () => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || !isConnected) {
+      setStatus('Please connect to OpenAI first')
+      return
+    }
+    
+    setStatus('Sending sample audio file...')
+    
+    // Add a sample message to the UI
+    setMessages(prev => [...prev, { role: 'user', content: '🎤 [Sample Audio]' }])
+    
+    // Request to play the sample audio file
+    wsRef.current.send(JSON.stringify({
+      type: 'play_sample'
+    }))
+  }
+  
   // Start recording from microphone
   const startListening = async () => {
     if (!isConnected) {
       await connectWebSocket()
+      return
     }
     
     try {
@@ -146,7 +189,7 @@ function VoiceChat() {
           // Add message to UI
           setMessages(prev => [...prev, { role: 'user', content: '🎤 [Audio Message]' }])
           
-          // Send to OpenAI
+          // Send to WebSocket server
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
             wsRef.current.send(JSON.stringify({
               type: 'input_audio_buffer.append',
@@ -177,7 +220,6 @@ function VoiceChat() {
   
   // Stop recording
   const stopListening = () => {
-    console.log("hi")
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop()
       // Stop all tracks
@@ -217,6 +259,12 @@ function VoiceChat() {
       
       if (audioContextRef.current) {
         audioContextRef.current.close()
+      }
+      
+      // Clean up audio element
+      if (audioPlayerRef.current) {
+        audioPlayerRef.current.pause();
+        audioPlayerRef.current.src = '';
       }
     }
   }, [])
@@ -304,14 +352,16 @@ function VoiceChat() {
       
       <div style={{
         display: 'flex',
-        justifyContent: 'center'
+        justifyContent: 'center',
+        gap: '20px',
+        flexWrap: 'wrap'
       }}>
         <button
           onClick={isListening ? stopListening : startListening}
           disabled={!isConnected && isListening}
           style={{
-            width: '200px',
-            height: '200px',
+            width: '180px',
+            height: '180px',
             borderRadius: '50%',
             backgroundColor: isListening ? '#f44336' : '#4CAF50',
             color: 'white',
@@ -325,6 +375,28 @@ function VoiceChat() {
           }}
         >
           {isListening ? 'Stop Listening' : 'Start Listening'}
+        </button>
+        
+        {/* New Sample Audio Button */}
+        <button
+          onClick={playSampleAudio}
+          disabled={!isConnected}
+          style={{
+            width: '180px',
+            height: '180px',
+            borderRadius: '50%',
+            backgroundColor: '#2196F3',
+            color: 'white',
+            border: 'none',
+            fontSize: '18px',
+            cursor: isConnected ? 'pointer' : 'not-allowed',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: '0 4px 8px rgba(0,0,0,0.2)'
+          }}
+        >
+          Play Sample Audio
         </button>
       </div>
     </div>
