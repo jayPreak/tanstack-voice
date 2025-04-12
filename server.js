@@ -70,12 +70,13 @@ wss.on('connection', (ws) => {
         console.log(`Connecting to OpenAI for client ${clientId}`);
         
         // Connect to OpenAI's Realtime API
-        const url = 'wss://api.openai.com/v1/realtime';
+        const url = 'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17';
         
         openaiWs = new WebSocket(url, {
           headers: {
             'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'openai-beta': 'realtime=v1'  // Add this beta header
           }
         });
         
@@ -89,7 +90,7 @@ wss.on('connection', (ws) => {
           openaiWs.send(JSON.stringify({
             type: 'session.update',
             session: {
-              model: data.model || '4o-mini-realtime',
+              model: data.model || 'gpt-4o-realtime-preview-2024-12-17',
               voice: data.voice || 'alloy'
             }
           }));
@@ -130,7 +131,7 @@ wss.on('connection', (ws) => {
         }
         
         // Path to sample audio file
-        const samplePath = path.join(__dirname, 'public', 'sample.wav');
+        const samplePath = path.join(__dirname, 'public', 'harvard.wav');
         console.log(`Reading sample file from: ${samplePath}`);
         
         // Encode the audio file to base64

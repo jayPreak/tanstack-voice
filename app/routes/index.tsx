@@ -6,26 +6,35 @@ export const Route = createFileRoute('/')({
   component: VoiceChat,
 })
 
+interface Message {
+  role: string;
+  content: string;
+  audioUrl?: string;
+  isPlaying?: boolean;
+  timestamp: Date;
+}
+
 function VoiceChat() {
   const [status, setStatus] = useState('Ready')
   const [isConnected, setIsConnected] = useState(false)
   const [isListening, setIsListening] = useState(false)
-  const [messages, setMessages] = useState<Array<{role: string, content: string}>>([])
+  const [messages, setMessages] = useState<Message[]>([])
+  const [currentAudio, setCurrentAudio] = useState<string | null>(null)
   
   const wsRef = useRef<WebSocket | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
-  const audioContextRef = useRef<AudioContext | null>(null)
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null)
   
   useEffect(() => {
     // Create audio element for playing responses
-    if (!audioPlayerRef.current) {
-      const audioEl = new Audio();
-      audioEl.autoplay = false;
-      audioPlayerRef.current = audioEl;
-    }
+    const audioEl = new Audio();
+    audioEl.onended = () => setCurrentAudio(null);
+    audioPlayerRef.current = audioEl;
     
-    setStatus('Ready to connect to WebSocket server')
+    return () => {
+      audioEl.pause();
+      audioEl.src = '';
+    }
   }, [])
   
   const connectWebSocket = async () => {
@@ -74,32 +83,14 @@ function VoiceChat() {
               if (newMessages.length > 0 && newMessages[newMessages.length - 1].role === 'assistant') {
                 newMessages[newMessages.length - 1].content += data.delta.text
               } else {
-                newMessages.push({ role: 'assistant', content: data.delta.text })
+                newMessages.push({ 
+                  role: 'assistant', 
+                  content: data.delta.text,
+                  timestamp: new Date()
+                })
               }
               return newMessages
             })
-          }
-          else if (data.type === 'response.audio.delta') {
-            // Handle audio response from OpenAI
-            if (data.delta && audioPlayerRef.current) {
-              try {
-                // Convert base64 to an audio blob
-                const audioData = atob(data.delta);
-                const arrayBuffer = new ArrayBuffer(audioData.length);
-                const view = new Uint8Array(arrayBuffer);
-                for (let i = 0; i < audioData.length; i++) {
-                  view[i] = audioData.charCodeAt(i);
-                }
-                const blob = new Blob([arrayBuffer], { type: 'audio/wav' });
-                const url = URL.createObjectURL(blob);
-                
-                // Play the audio
-                audioPlayerRef.current.src = url;
-                audioPlayerRef.current.play();
-              } catch (error) {
-                console.error('Error playing audio:', error);
-              }
-            }
           }
           else if (data.type === 'error') {
             setStatus(`Error: ${data.message}`)
@@ -133,14 +124,41 @@ function VoiceChat() {
     
     setStatus('Sending sample audio file...')
     
-    // Add a sample message to the UI
-    setMessages(prev => [...prev, { role: 'user', content: '🎤 [Sample Audio]' }])
+    // For sample audio, we'll just use a placeholder UI element
+    setMessages(prev => [...prev, { 
+      role: 'user', 
+      content: '🎤 Sample: harvard.wav',
+      audioUrl: '/harvard.wav', // This is the actual path to your sample file
+      timestamp: new Date()
+    }])
     
     // Request to play the sample audio file
     wsRef.current.send(JSON.stringify({
       type: 'play_sample'
     }))
   }
+  
+  // Play recorded audio
+  const playAudio = (url) => {
+    if (!audioPlayerRef.current) return;
+    
+    if (currentAudio === url) {
+      // If the same audio is playing, stop it
+      audioPlayerRef.current.pause();
+      audioPlayerRef.current.currentTime = 0;
+      setCurrentAudio(null);
+    } else {
+      // Stop any currently playing audio
+      if (currentAudio) {
+        audioPlayerRef.current.pause();
+      }
+      
+      // Play the selected audio
+      audioPlayerRef.current.src = url;
+      audioPlayerRef.current.play().catch(err => console.error('Error playing audio:', err));
+      setCurrentAudio(url);
+    }
+  };
   
   // Start recording from microphone
   const startListening = async () => {
@@ -153,11 +171,6 @@ function VoiceChat() {
       setStatus('Getting microphone access...')
       
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      
-      // Initialize AudioContext for audio processing
-      if (!audioContextRef.current) {
-        audioContextRef.current = new AudioContext()
-      }
       
       // Create MediaRecorder
       const mediaRecorder = new MediaRecorder(stream, {
@@ -177,6 +190,7 @@ function VoiceChat() {
       // Send audio data when available
       mediaRecorder.onstop = async () => {
         const audioBlob = new Blob(audioChunks, { type: 'audio/webm' })
+        const audioUrl = URL.createObjectURL(audioBlob)
         
         // Convert blob to base64
         const reader = new FileReader()
@@ -186,8 +200,13 @@ function VoiceChat() {
           // Remove the data URL prefix (data:audio/webm;base64,)
           const base64Data = base64Audio.split(',')[1]
           
-          // Add message to UI
-          setMessages(prev => [...prev, { role: 'user', content: '🎤 [Audio Message]' }])
+          // Add message to UI with playable audio
+          setMessages(prev => [...prev, { 
+            role: 'user', 
+            content: '🎤 Audio Message',
+            audioUrl: audioUrl,
+            timestamp: new Date()
+          }])
           
           // Send to WebSocket server
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -246,6 +265,13 @@ function VoiceChat() {
     setStatus('Disconnected')
   }
   
+  // Format time for messages
+  const formatTime = (date: Date) => {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  console.log({messages})
+  
   // Clean up on unmount
   useEffect(() => {
     return () => {
@@ -257,17 +283,14 @@ function VoiceChat() {
         mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop())
       }
       
-      if (audioContextRef.current) {
-        audioContextRef.current.close()
-      }
-      
-      // Clean up audio element
-      if (audioPlayerRef.current) {
-        audioPlayerRef.current.pause();
-        audioPlayerRef.current.src = '';
-      }
+      // Revoke object URLs to prevent memory leaks
+      messages.forEach(msg => {
+        if (msg.audioUrl && msg.audioUrl !== '#sample') {
+          URL.revokeObjectURL(msg.audioUrl);
+        }
+      });
     }
-  }, [])
+  }, [messages])
   
   return (
     <div style={{ 
@@ -345,7 +368,68 @@ function VoiceChat() {
               marginRight: msg.role === 'assistant' ? 'auto' : '0',
             }}
           >
-            <strong>{msg.role === 'user' ? 'You' : 'Assistant'}:</strong> {msg.content}
+            <div style={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              marginBottom: '5px', 
+              fontSize: '0.8em', 
+              color: '#666' 
+            }}>
+              <strong>{msg.role === 'user' ? 'You' : 'Assistant'}</strong>
+              <span>{formatTime(msg.timestamp)}</span>
+            </div>
+            
+            {msg.audioUrl ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <button
+                  onClick={() => msg.audioUrl !== '#sample' && playAudio(msg.audioUrl)}
+                  style={{
+                    width: '36px',
+                    height: '36px',
+                    borderRadius: '50%',
+                    backgroundColor: currentAudio === msg.audioUrl ? '#f44336' : '#2196F3',
+                    color: 'white',
+                    border: 'none',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: msg.audioUrl !== '#sample' ? 'pointer' : 'not-allowed',
+                    fontSize: '16px'
+                  }}
+                >
+                  {currentAudio === msg.audioUrl ? '■' : '▶'}
+                </button>
+                <div style={{ 
+                  flex: 1, 
+                  height: '36px', 
+                  backgroundColor: '#e0e0e0',
+                  borderRadius: '18px',
+                  position: 'relative',
+                  overflow: 'hidden'
+                }}>
+                  <div style={{
+                    position: 'absolute',
+                    top: '0',
+                    left: '0',
+                    height: '100%',
+                    width: currentAudio === msg.audioUrl ? '100%' : '0',
+                    backgroundColor: '#bbdefb',
+                    transition: 'width 0.1s linear'
+                  }}></div>
+                  <div style={{
+                    position: 'absolute',
+                    top: '50%',
+                    left: '15px',
+                    transform: 'translateY(-50%)',
+                    zIndex: 1
+                  }}>
+                    <span>{msg.content}</span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div>{msg.content}</div>
+            )}
           </div>
         ))}
       </div>
@@ -377,7 +461,6 @@ function VoiceChat() {
           {isListening ? 'Stop Listening' : 'Start Listening'}
         </button>
         
-        {/* New Sample Audio Button */}
         <button
           onClick={playSampleAudio}
           disabled={!isConnected}
