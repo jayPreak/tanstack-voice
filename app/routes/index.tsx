@@ -1,5 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState, useEffect, useRef } from "react";
+import { Button } from "../components/button";
+import { Card, CardContent } from "../components/card";
+import { Mic, MicOff, Play, RotateCw } from "lucide-react";
 
 export const Route = createFileRoute("/")({
   component: WebSocketTest,
@@ -12,6 +15,15 @@ function WebSocketTest() {
   const [isRecording, setIsRecording] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const [messages, setMessages] = useState<
+    Array<{ type: string; content: string; timestamp: string }>
+  >([
+    {
+      type: "assistant",
+      content: "Hi there! How can I help you today?",
+      timestamp: "04:24 PM",
+    },
+  ]);
 
   const sendPlay = () => {
     wsRef.current?.send(
@@ -29,29 +41,52 @@ function WebSocketTest() {
     wsRef.current = ws;
 
     ws.onopen = () => {
-      setStatus("Connected! Sending sample request...");
+      setStatus("Connected");
     };
 
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
         console.log({ data });
-        console.log("fuck");
 
         if (data.event === "media" && data.media && data.media.payload) {
           setResponse(data.media.payload);
           setStatus("Received media payload!");
+
+          // Add message to chat
+          setMessages((prev) => [
+            ...prev,
+            {
+              type: "assistant",
+              content: data.media.payload,
+              timestamp: new Date().toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
+            },
+          ]);
         } else if (data.type === "message") {
-          console.log("WHAT");
           setResponse(data.message);
-          setStatus("Received text message!");
+          setStatus("Received message");
+
+          // Add message to chat
+          setMessages((prev) => [
+            ...prev,
+            {
+              type: "assistant",
+              content: data.message,
+              timestamp: new Date().toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
+            },
+          ]);
         } else if (data.type === "system") {
-          // console.log(data.message)
           setResponse(data.message);
-          setStatus("Received system message!");
+          setStatus("System: " + data.message);
         } else {
-          setResponse(`Other data received: ${JSON.stringify(data)}`);
-          setStatus("Received data");
+          setResponse(`${JSON.stringify(data)}`);
+          setStatus("Data received");
         }
       } catch (error) {
         console.error("Error parsing response:", error);
@@ -86,6 +121,19 @@ function WebSocketTest() {
         const url = URL.createObjectURL(audioBlob);
         setAudioUrl(url);
 
+        // Add user audio message to chat
+        setMessages((prev) => [
+          ...prev,
+          {
+            type: "user",
+            content: "audio",
+            timestamp: new Date().toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+          },
+        ]);
+
         const reader = new FileReader();
 
         reader.onloadend = () => {
@@ -117,103 +165,197 @@ function WebSocketTest() {
     }
   };
 
+  useEffect(() => {
+    // Add a simulated response on first load for demo purposes
+    setTimeout(() => {
+      setMessages((prev) => [
+        ...prev,
+        {
+          type: "assistant",
+          content: "I'm an AI assistant. This is a simulated response!",
+          timestamp: "04:24 PM",
+        },
+      ]);
+    }, 1000);
+  }, []);
+
   return (
-    <div
-      style={{
-        maxWidth: "800px",
-        margin: "40px auto",
-        padding: "20px",
-        fontFamily: "Arial, sans-serif",
-        textAlign: "center",
-      }}
-    >
-      <h1>WebSocket Sample Audio Test</h1>
-
-      <div style={{ margin: "20px 0" }}>
-        <p>
-          Status: <strong>{status}</strong>
-        </p>
+    <div className="flex flex-col h-screen bg-slate-900 text-white">
+      {/* Header */}
+      <div className="border-b border-slate-700 p-4">
+        <div className="flex items-center space-x-3 max-w-6xl mx-auto">
+          <div className="bg-indigo-500 rounded-full p-2">
+            <div className="text-white">
+              <svg
+                className="w-6 h-6"
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  d="M12 2L4 6V18L12 22L20 18V6L12 2Z"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M12 22V14"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M20 6L12 10L4 6"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M12 10L12 14"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </div>
+          </div>
+          <div>
+            <h1 className="text-xl font-bold">Tanstack voice</h1>
+            <p className="text-sm text-slate-400">Powered by AI</p>
+          </div>
+          <div className="ml-auto flex items-center space-x-2">
+            <span className="text-xs bg-slate-800 px-2 py-1 rounded">
+              Status: {status}
+            </span>
+            <Button variant="outline" size="sm" onClick={connect}>
+              <RotateCw className="w-4 h-4 mr-2" />
+              Connect
+            </Button>
+            <Button variant="outline" size="sm" onClick={sendPlay}>
+              <Play className="w-4 h-4 mr-2" />
+              Play Sample
+            </Button>
+          </div>
+        </div>
       </div>
 
-      <button
-        onClick={connect}
-        style={{
-          padding: "12px 24px",
-          fontSize: "16px",
-          backgroundColor: "#4CAF50",
-          color: "white",
-          border: "none",
-          borderRadius: "4px",
-          cursor: "pointer",
-          margin: "20px 0",
-        }}
-      >
-        Connect
-      </button>
-
-      <button
-        onClick={sendPlay}
-        style={{
-          padding: "12px 24px",
-          fontSize: "16px",
-          backgroundColor: "#4CAF50",
-          color: "white",
-          border: "none",
-          borderRadius: "4px",
-          cursor: "pointer",
-          margin: "20px 0",
-        }}
-      >
-        Play Sample
-      </button>
-      <div style={{ margin: "20px 0" }}>
-        <p>
-          Status: <strong>{isRecording ? "Recording..." : "Ready"}</strong>
-        </p>
+      {/* Chat Container */}
+      <div className="flex-1 overflow-y-auto p-4 bg-slate-900 max-w-6xl mx-auto w-full">
+        <div className="space-y-4">
+          {messages.map((msg, idx) => (
+            <div
+              key={idx}
+              className={`flex ${msg.type === "assistant" ? "justify-start" : "justify-end"}`}
+            >
+              <div
+                className={`max-w-[70%] ${
+                  msg.type === "assistant"
+                    ? "bg-slate-800 rounded-tl-none"
+                    : "bg-indigo-600 rounded-tr-none"
+                } rounded-2xl p-4 backdrop-blur-lg bg-opacity-80 shadow-lg`}
+              >
+                {msg.type === "assistant" ? (
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-2">
+                      <div className="bg-indigo-500 rounded-full p-1">
+                        <svg
+                          className="w-4 h-4 text-white"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            stroke="currentColor"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth="2"
+                            d="M12 2L4 6V18L12 22L20 18V6L12 2Z"
+                          ></path>
+                        </svg>
+                      </div>
+                      <span className="text-xs text-slate-400">
+                        AI Assistant
+                      </span>
+                      <span className="text-xs text-slate-500">
+                        {msg.timestamp}
+                      </span>
+                    </div>
+                    <p className="text-white text-sm">{msg.content}</p>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-indigo-200">You</span>
+                      <span className="text-xs text-indigo-300">
+                        {msg.timestamp}
+                      </span>
+                    </div>
+                    {msg.content === "audio" ? (
+                      <div className="mt-2">
+                        <audio
+                          className="w-full h-10"
+                          controls
+                          src={audioUrl || undefined}
+                        />
+                      </div>
+                    ) : (
+                      <p className="text-white text-sm">{msg.content}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
-      <button
-        onClick={isRecording ? stopRecording : startRecording}
-        style={{
-          padding: "12px 24px",
-          fontSize: "16px",
-          backgroundColor: isRecording ? "#f44336" : "#FF5722",
-          color: "white",
-          border: "none",
-          borderRadius: "4px",
-          cursor: "pointer",
-          margin: "20px 0",
-        }}
-      >
-        {isRecording ? "Stop Recording" : "Record Audio"}
-      </button>
 
-      {audioUrl && (
-        <div style={{ marginTop: "20px" }}>
-          <h3>Recorded Audio:</h3>
-          <audio controls src={audioUrl} style={{ width: "100%" }} />
+      {/* Footer with Input */}
+      <div className="border-t border-slate-700 p-4">
+        <div className="max-w-6xl mx-auto">
+          <div className="flex items-center relative">
+            <div className="relative flex-1">
+              <input
+                type="text"
+                className="w-full bg-slate-800 text-white rounded-full py-3 px-5 pr-12 border border-slate-700 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none"
+                placeholder="Type your message..."
+              />
+              <Button
+                variant={isRecording ? "destructive" : "ghost"}
+                size="icon"
+                onClick={isRecording ? stopRecording : startRecording}
+                className="absolute right-2 top-1/2 transform -translate-y-1/2"
+              >
+                {isRecording ? (
+                  <MicOff className="h-5 w-5" />
+                ) : (
+                  <Mic className="h-5 w-5" />
+                )}
+              </Button>
+            </div>
+            <Button
+              className="ml-2 rounded-full w-10 h-10 flex-shrink-0 bg-indigo-600 hover:bg-indigo-700"
+              size="icon"
+            >
+              <svg
+                className="h-5 w-5"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2"
+                  d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
+                />
+              </svg>
+            </Button>
+          </div>
         </div>
-      )}
-
-      {response && (
-        <div
-          style={{
-            marginTop: "30px",
-            padding: "15px",
-            backgroundColor: "#f5f5f5",
-            borderRadius: "4px",
-            border: "1px solid #ddd",
-            textAlign: "left",
-            wordBreak: "break-all",
-          }}
-        >
-          <h3>Received Payload:</h3>
-          <p
-            style={{ fontSize: "14px", maxHeight: "300px", overflowY: "auto" }}
-          >
-            {response}
-          </p>
-        </div>
-      )}
+      </div>
     </div>
   );
 }

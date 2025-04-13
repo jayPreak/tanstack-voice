@@ -1,0 +1,7 @@
+{
+    "path": "app/components",
+    "aliases": {
+      "@/components": "./app/components",
+      "@/lib/utils": "./app/lib/utils"
+    }
+  }
