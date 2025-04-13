@@ -49,7 +49,7 @@ function WebSocketTest() {
 
   const connect = () => {
     setStatus("Connecting...");
-    const wsUrl = import.meta.env.VITE_WEBSOCKET_URL || "ws://localhost:8080";
+    const wsUrl = import.meta.env.VITE_WEBSOCKET_URL;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
@@ -217,10 +217,8 @@ function WebSocketTest() {
       </div>
     </div>
   );
-  const audioSrc = process.env.VERCEL_ENV
-    ? "harvard.wav"
-    : "/public/harvard.wav";
-  console.log({ audioSrc, processEnv: process.env.VERCEL_ENV });
+  const vercel = import.meta.env.VITE_VERCEL_ENV;
+  const audioSrc = vercel ? "harvard.wav" : "/public/harvard.wav";
 
   return (
     <div className="flex flex-col h-screen bg-slate-900 text-white">
