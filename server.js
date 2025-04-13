@@ -2,6 +2,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
+import decodeAudio from "audio-decode";
 
 dotenv.config();
 
@@ -18,6 +19,31 @@ const LOG_EVENT_TYPES = [
   "response.text.done",
   "conversation.item.input_audio_transcription.completed",
 ];
+
+export function floatTo16BitPCM(float32Array) {
+  const buffer = new ArrayBuffer(float32Array.length * 2);
+  const view = new DataView(buffer);
+  let offset = 0;
+  for (let i = 0; i < float32Array.length; i++, offset += 2) {
+    let s = Math.max(-1, Math.min(1, float32Array[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return buffer;
+}
+
+export function base64EncodeAudio(float32Array) {
+  const arrayBuffer = floatTo16BitPCM(float32Array);
+  let binary = "";
+  let bytes = new Uint8Array(arrayBuffer);
+  const chunkSize = 0x8000; // 32KB chunk size
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    let chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode.apply(null, chunk);
+  }
+  return btoa(binary);
+}
+
+const files = ["./public/sports.wav", "./public/harvard.wav"];
 
 const port = process.env.PORT || 8080;
 const wss = new WebSocketServer({ port });
@@ -130,36 +156,52 @@ wss.on("connection", (ws) => {
   });
 
   // Handle messages from frontend
-  ws.on("message", (message) => {
+  ws.on("message", async (message) => {
     try {
       const data = JSON.parse(message.toString());
       console.log(`Received from frontend:`, data.type);
 
       switch (data.type) {
         case "play_sample":
-          const filePath = path.join(process.cwd(), "public", "harvard.wav");
-          console.log(`Reading sample audio from ${filePath}`);
+          // const filePath = path.join(process.cwd(), "public", "harvard.wav");
+          // console.log(`Reading sample audio from ${filePath}`);
 
-          const audioData = fs.readFileSync(filePath);
-          const base64Audio = audioData.toString("base64");
+          // const audioData = fs.readFileSync(filePath);
+          // const base64Audio = audioData.toString("base64");
 
-          console.log("Sending full audio message to OpenAI...");
-          const event = {
-            type: "conversation.item.create",
-            item: {
-              type: "message",
-              role: "user",
-              content: [
-                {
-                  type: "input_audio",
-                  // type: "input_text",
-                  audio: base64Audio,
-                  // text: "Hiiii can you please respond to this I like peanut butter a lot and we can have a peanut butter and jelly sandwich :D",
-                },
-              ],
-            },
-          };
-          openAiWs.send(JSON.stringify(event));
+          // console.log("Sending full audio message to OpenAI...");
+          // const event = {
+          //   type: "conversation.item.create",
+          //   item: {
+          //     type: "message",
+          //     role: "user",
+          //     content: [
+          //       {
+          //         type: "input_audio",
+          //         // type: "input_text",
+          //         audio: base64Audio,
+          //         // text: "Hiiii can you please respond to this I like peanut butter a lot and we can have a peanut butter and jelly sandwich :D",
+          //       },
+          //     ],
+          //   },
+          // };
+
+          for (const filename of files) {
+            const audioFile = fs.readFileSync(filename);
+            const audioBuffer = await decodeAudio(audioFile);
+            const channelData = audioBuffer.getChannelData(0);
+            const base64Chunk = base64EncodeAudio(channelData);
+            openAiWs.send(
+              JSON.stringify({
+                type: "input_audio_buffer.append",
+                audio: base64Chunk,
+              })
+            );
+          }
+
+          openAiWs.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+          // openAiWs.send(JSON.stringify({ type: "response.create" }));
+          // openAiWs.send(JSON.stringify(event));
           console.log("Sample audio sent to OpenAI");
           break;
         case "send_audio":

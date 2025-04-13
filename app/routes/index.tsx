@@ -86,12 +86,11 @@ function WebSocketTest() {
         const url = URL.createObjectURL(audioBlob);
         setAudioUrl(url);
 
-        // Convert audioBlob to base64
         const reader = new FileReader();
-        reader.readAsDataURL(audioBlob);
+
         reader.onloadend = () => {
-          const base64Audio = reader.result?.split(",")[1]; // Remove the data URL part
-          console.log("Base64 Audio:", base64Audio);
+          const base64Audio = reader.result?.split(",")[1]; // Remove data URL prefix
+          // Send base64Audio to backend via WebSocket
           wsRef.current?.send(
             JSON.stringify({
               type: "send_audio",
@@ -99,6 +98,7 @@ function WebSocketTest() {
             })
           );
         };
+        reader.readAsDataURL(audioBlob);
 
         stream.getTracks().forEach((track) => track.stop());
       };
