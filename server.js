@@ -184,6 +184,28 @@ wss.on("connection", (ws) => {
           // });
           openAiWs.send(JSON.stringify(event));
           console.log("Sample audio sent to OpenAI");
+        case "send_audio":
+          console.log({ data });
+          const audioString = data.audio;
+
+          console.log("Sending full audio message to OpenAI...");
+          const eventToSend = {
+            type: "conversation.item.create",
+            item: {
+              type: "message",
+              role: "user",
+              content: [
+                {
+                  type: "input_audio",
+                  // type: "input_text",
+                  audio: audioString,
+                  // text: "Hiiii can you please respond to this I like peanut butter a lot :D",
+                },
+              ],
+            },
+          };
+          openAiWs.send(JSON.stringify(eventToSend));
+          console.log("Sample audio sent to OpenAI");
 
         // if (session.frontendConn && isOpen(session.frontendConn)) {
         //   jsonSend(session.frontendConn, {
