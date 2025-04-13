@@ -154,27 +154,14 @@ wss.on("connection", (ws) => {
                   type: "input_audio",
                   // type: "input_text",
                   audio: base64Audio,
-                  // text: "Hiiii can you please respond to this I like peanut butter a lot :D",
+                  // text: "Hiiii can you please respond to this I like peanut butter a lot and we can have a peanut butter and jelly sandwich :D",
                 },
               ],
             },
           };
-          //   type: "conversation.item.create",
-          //   item: {
-          //     type: "message",
-          //     role: "user",
-          //     content: [
-          //       {
-          //         type: "input_audio",
-          //         // type: "input_text",
-          //         audio: base64Audio,
-          //         // text: "Hiiii can you please respond to this I like peanut butter a lot :D"
-          //       },
-          //     ],
-          //   },
-          // });
           openAiWs.send(JSON.stringify(event));
           console.log("Sample audio sent to OpenAI");
+          break;
         case "send_audio":
           console.log({ data });
           const audioString = data.audio;
@@ -195,11 +182,10 @@ wss.on("connection", (ws) => {
           };
           openAiWs.send(JSON.stringify(eventToSend));
           console.log("Sample audio sent to OpenAI");
-
-        // case "start":
-        //   session.streamSid = data.start.streamSid;
-        //   console.log("Incoming stream has started", session.streamSid);
-        //   break;
+        case "start":
+          session.streamSid = data.start.streamSid;
+          console.log("Incoming stream has started", session.streamSid);
+          break;
         default:
           console.log("Received non-media event:", data.type);
           break;
