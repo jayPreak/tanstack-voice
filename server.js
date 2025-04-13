@@ -1,314 +1,245 @@
 // server.js - Minimal OpenAI Realtime WebSocket server
-import { WebSocketServer, WebSocket } from 'ws';
-import fs from 'fs';
-import path from 'path';
-import dotenv from 'dotenv';
+import { WebSocketServer, WebSocket } from "ws";
+import fs from "fs";
+import path from "path";
+import dotenv from "dotenv";
 dotenv.config();
-// Your OpenAI API key - replace with your actual key
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-console.log({OPENAI_API_KEY})
-
-// Create WebSocket server
+const LOG_EVENT_TYPES = [
+  "response.content.done",
+  "rate_limits.updated",
+  "response.done",
+  "input_audio_buffer.committed",
+  "input_audio_buffer.speech_stopped",
+  "input_audio_buffer.speech_started",
+  "session.created",
+  "response.text.done",
+  "conversation.item.input_audio_transcription.completed",
+];
 const wss = new WebSocketServer({ port: 8080 });
-console.log('WebSocket server started on port 8080');
+console.log("WebSocket server started on port 8080");
 
 // Single session for simplicity
 let session = {
   frontendConn: null,
   openaiConn: null,
-  isConnecting: false
+  isConnecting: false,
 };
 
 // Handle new connections from frontend
-wss.on('connection', (ws) => {
-  console.log('Frontend client connected');
-  
+wss.on("connection", (ws) => {
+  console.log("Frontend client connected");
+
   // Store frontend connection
   session.frontendConn = ws;
-  
+
   // Send initial system message
   jsonSend(ws, {
-    type: 'system',
-    message: 'Connected to WebSocket server'
+    type: "system",
+    message: "Connected to WebSocket server",
   });
-  
+  const openAiWs = new WebSocket(
+    "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview",
+    {
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "OpenAI-Beta": "realtime=v1",
+      },
+    }
+  );
+
+  const sendSessionUpdate = () => {
+    const sessionUpdate = {
+      type: "session.update",
+      session: {
+        turn_detection: { type: "server_vad" },
+        input_audio_format: "g711_ulaw",
+        output_audio_format: "g711_ulaw",
+        // voice: VOICE,
+        // instructions: SYSTEM_MESSAGE,
+        modalities: ["text", "audio"],
+        temperature: 0.8,
+        input_audio_transcription: {
+          model: "whisper-1",
+        },
+      },
+    };
+
+    console.log("Sending session update:", JSON.stringify(sessionUpdate));
+    openAiWs.send(JSON.stringify(sessionUpdate));
+  };
+
+  openAiWs.on("open", () => {
+    console.log("Connected to the OpenAI Realtime API");
+    setTimeout(sendSessionUpdate, 250);
+  });
+  openAiWs.on("message", (data) => {
+    try {
+      const message = JSON.parse(data);
+      if (LOG_EVENT_TYPES.includes(message.type)) {
+        console.log(`Received event: ${message.type}`, message);
+      }
+
+      if (message.type === "response.done") {
+        const agentMessage =
+          message.response.output[0]?.content?.find(
+            (content) => content.transcript
+          )?.transcript || "Agent message not found";
+        session.transcript += `Agent: ${agentMessage}\n`;
+        console.log(`Agent (${session.id}): ${agentMessage}`);
+        jsonSend(ws, {
+          type: "message",
+          message: agentMessage,
+        });
+      }
+      if (message.type === "session.updated") {
+        console.log("Session updated successfully:", message);
+      }
+      if (message.type === "response.audio.delta" && message.delta) {
+        const audioDelta = {
+          event: "media",
+          streamSid: session.streamSid,
+          media: {
+            payload: Buffer.from(message.delta, "base64").toString("base64"),
+          },
+        };
+        ws.send(JSON.stringify(audioDelta));
+      }
+      if (message.type === "conversation.item.created") {
+        const responseCreateEvent = {
+          type: "response.create",
+        };
+        openAiWs.send(JSON.stringify(responseCreateEvent));
+      }
+      if (message.type !== "response.audio.delta") {
+        console.log("fuck");
+        console.log({ message });
+        console.log(`OpenAI event:`, message.type);
+        console.log(JSON.stringify(message, null, 2));
+      }
+      console.log("hiiiiii what", message.type);
+    } catch (error) {
+      console.error(
+        "Error processing OpenAI message:",
+        error,
+        "Raw message:",
+        data
+      );
+    }
+  });
+
   // Handle messages from frontend
-  ws.on('message', handleFrontendMessage);
-  
+  ws.on("message", (message) => {
+    try {
+      const data = JSON.parse(message.toString());
+      console.log(`Received from frontend:`, data.type);
+
+      switch (data.type) {
+        case "media":
+          if (openAiWs.readyState === WebSocket.OPEN) {
+            const audioAppend = {
+              type: "input_audio_buffer.append",
+              audio: data.media.payload,
+            };
+
+            openAiWs.send(JSON.stringify(audioAppend));
+          }
+          break;
+        case "play_sample":
+          const filePath = path.join(process.cwd(), "public", "harvard.wav");
+          console.log(`Reading sample audio from ${filePath}`);
+
+          const audioData = fs.readFileSync(filePath);
+          const base64Audio = audioData.toString("base64");
+
+          console.log("Sending full audio message to OpenAI...");
+          const event = {
+            type: "conversation.item.create",
+            item: {
+              type: "message",
+              role: "user",
+              content: [
+                {
+                  type: "input_audio",
+                  // type: "input_text",
+                  audio: base64Audio,
+                  // text: "Hiiii can you please respond to this I like peanut butter a lot :D",
+                },
+              ],
+            },
+          };
+          //   type: "conversation.item.create",
+          //   item: {
+          //     type: "message",
+          //     role: "user",
+          //     content: [
+          //       {
+          //         type: "input_audio",
+          //         // type: "input_text",
+          //         audio: base64Audio,
+          //         // text: "Hiiii can you please respond to this I like peanut butter a lot :D"
+          //       },
+          //     ],
+          //   },
+          // });
+          openAiWs.send(JSON.stringify(event));
+          console.log("Sample audio sent to OpenAI");
+
+        // if (session.frontendConn && isOpen(session.frontendConn)) {
+        //   jsonSend(session.frontendConn, {
+        //     type: "system",
+        //     message: "Sample audio sent to OpenAI",
+        //   });
+        // }
+        case "start":
+          session.streamSid = data.start.streamSid;
+          console.log("Incoming stream has started", session.streamSid);
+          break;
+        default:
+          console.log("Received non-media event:", data.type);
+          break;
+      }
+    } catch (error) {
+      console.error("Error parsing message:", error, "Message:", message);
+    }
+  });
+
   // Handle frontend disconnection
-  ws.on('close', () => {
-    console.log('Frontend client disconnected');
+  ws.on("close", () => {
+    console.log("Frontend client disconnected");
     session.frontendConn = null;
-    
+
     // Clean up OpenAI connection if frontend disconnects
     if (session.openaiConn) {
       session.openaiConn.close();
       session.openaiConn = null;
     }
   });
-  
-  ws.on('error', (error) => {
-    console.error('Frontend connection error:', error);
+
+  ws.on("error", (error) => {
+    console.error("Frontend connection error:", error);
     session.frontendConn = null;
-    
+
     // Clean up OpenAI connection on error
     if (session.openaiConn) {
       session.openaiConn.close();
       session.openaiConn = null;
     }
   });
+
+  openAiWs.on("close", () => {
+    console.log("Disconnected from the OpenAI Realtime API");
+  });
+
+  openAiWs.on("error", (error) => {
+    console.error("Error in the OpenAI WebSocket:", error);
+  });
 });
-
-// Handle messages from frontend
-function handleFrontendMessage(data) {
-  try {
-    const message = JSON.parse(data.toString());
-    console.log(`Received from frontend:`, message.type);
-    
-    // Handle different message types
-    switch (message.type) {
-      case 'connect':
-        connectToOpenAI(message.model || '4o-mini-realtime', message.voice || 'alloy');
-        break;
-        
-      case 'play_sample':
-        if (!session.openaiConn || !isOpen(session.openaiConn)) {
-          console.log('No active OpenAI connection, connecting first...');
-          connectToOpenAI('4o-mini-realtime', 'alloy', () => {
-            sendSampleAudio(message.filename || 'harvard.wav');
-          });
-        } else {
-          // Already connected, just send sample
-          sendSampleAudio(message.filename || 'harvard.wav');
-        }
-        break;
-        
-      default:
-        // Forward anything else to OpenAI
-        if (session.openaiConn && isOpen(session.openaiConn)) {
-          session.openaiConn.send(data.toString());
-        } else {
-          console.log(`Cannot forward message: No active OpenAI connection`);
-        }
-    }
-  } catch (error) {
-    console.error('Error processing frontend message:', error);
-  }
-}
-
-// Connect to OpenAI Realtime API
-function connectToOpenAI(model, voice, callback) {
-  if (session.isConnecting) {
-    console.log('Already connecting to OpenAI, ignoring duplicate request');
-    return;
-  }
-  
-  // Clean up existing connection if any
-  if (session.openaiConn) {
-    session.openaiConn.close();
-    session.openaiConn = null;
-  }
-  
-  session.isConnecting = true;
-  
-  // Notify frontend
-  if (session.frontendConn && isOpen(session.frontendConn)) {
-    jsonSend(session.frontendConn, {
-      type: 'system',
-      message: 'Connecting to OpenAI...'
-    });
-  }
-  
-  console.log(`Connecting to OpenAI with model: ${model}, voice: ${voice}`);
-  
-  try {
-    // Connect to OpenAI WebSocket
-    const openaiConn = new WebSocket(
-      'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview',
-      {
-        headers: {
-          'Authorization': `Bearer ${OPENAI_API_KEY}`,
-          "OpenAI-Beta": "realtime=v1",
-        }
-      }
-    );
-    
-    // Handle OpenAI connection open
-    openaiConn.on('open', () => {
-      console.log('Connected to OpenAI WebSocket');
-      session.openaiConn = openaiConn;
-      session.isConnecting = false;
-      
-      // Initialize session with OpenAI
-      jsonSend(openaiConn, {
-        type: 'session.update',
-        session: {
-          modalities: ["text", "audio"],
-        turn_detection: { type: "server_vad" },
-        voice: "ash",
-        input_audio_transcription: { model: "whisper-1" },
-          input_audio_format: "pcm16",
-          output_audio_format: "pcm16"
-        },
-        // model: model,
-        // voice: voice
-      });
-      
-      // Notify frontend
-      if (session.frontendConn && isOpen(session.frontendConn)) {
-        jsonSend(session.frontendConn, {
-          type: 'openai.connected',
-          // model: model,
-          // voice: voice
-        });
-        
-        // Send session created message
-        jsonSend(session.frontendConn, {
-          type: 'session.created'
-        });
-      }
-      
-      // Execute callback if provided
-      if (callback && typeof callback === 'function') {
-        callback();
-      }
-    });
-    
-    // Handle messages from OpenAI
-    openaiConn.on('message', (data) => {
-      // Forward all OpenAI messages to frontend
-      // if (session.frontendConn && isOpen(session.frontendConn)) {
-      //   session.frontendConn.send(data.toString());
-      // }
-      
-      // Log non-audio message types (to avoid console flooding)
-      try {
-        const message = JSON.parse(data.toString());
-        if (message.type !== 'response.audio.delta') {
-          console.log("fuck")
-          console.log({message})
-          console.log(`OpenAI event:`, message.type);
-          console.log(message.content)
-        } else {
-          console.log("hiii")
-
-        }
-      } catch (error) {
-        // Ignore parsing errors
-      }
-    });
-    
-    // Handle OpenAI connection close
-    openaiConn.on('close', () => {
-      console.log('OpenAI WebSocket closed');
-      session.openaiConn = null;
-      session.isConnecting = false;
-      
-      if (session.frontendConn && isOpen(session.frontendConn)) {
-        jsonSend(session.frontendConn, {
-          type: 'system',
-          message: 'Disconnected from OpenAI'
-        });
-      }
-    });
-    
-    // Handle OpenAI connection error
-    openaiConn.on('error', (error) => {
-      console.error('OpenAI connection error:', error);
-      session.isConnecting = false;
-      
-      if (session.frontendConn && isOpen(session.frontendConn)) {
-        jsonSend(session.frontendConn, {
-          type: 'error',
-          message: `OpenAI error: ${error.message}`
-        });
-      }
-    });
-  } catch (error) {
-    console.error('Error creating OpenAI connection:', error);
-    session.isConnecting = false;
-    
-    if (session.frontendConn && isOpen(session.frontendConn)) {
-      jsonSend(session.frontendConn, {
-        type: 'error',
-        message: `Connection error: ${error.message}`
-      });
-    }
-  }
-}
-
-// Send sample audio to OpenAI
-function sendSampleAudio(filename) {
-  if (!session.openaiConn || !isOpen(session.openaiConn)) {
-    console.error('Cannot send sample audio: No active OpenAI connection');
-    return;
-  }
-  
-  try {
-    // Construct file path
-    const filePath = path.join(process.cwd(), 'public', filename);
-    console.log(`Reading sample audio from ${filePath}`);
-    
-    // Check if file exists
-    if (!fs.existsSync(filePath)) {
-      const error = `Sample file not found: ${filePath}`;
-      console.error(error);
-      
-      if (session.frontendConn && isOpen(session.frontendConn)) {
-        jsonSend(session.frontendConn, {
-          type: 'error',
-          message: error
-        });
-      }
-      return;
-    }
-    
-    // Read file and convert to base64
-    const audioData = fs.readFileSync(filePath);
-    const base64Audio = audioData.toString('base64');
-    
-    console.log('Sending full audio message to OpenAI...');
-    
-    // Method 1: Send as a complete conversation item
-    jsonSend(session.openaiConn, {
-      type: "conversation.item.create",
-      item: {
-        type: "message",
-        role: "user",
-        content: [
-          {
-            // type: "input_audio",
-            type: "input_text",
-            // audio: base64Audio,
-            text: "Hiiii can you please respond to this I like peanut butter a lot :D"
-          },
-        ],
-      }
-    });
-    
-    console.log('Sample audio sent to OpenAI');
-    
-    if (session.frontendConn && isOpen(session.frontendConn)) {
-      jsonSend(session.frontendConn, {
-        type: 'system',
-        message: 'Sample audio sent to OpenAI'
-      });
-    }
-  } catch (error) {
-    console.error('Error sending sample audio:', error);
-    
-    if (session.frontendConn && isOpen(session.frontendConn)) {
-      jsonSend(session.frontendConn, {
-        type: 'error',
-        message: `Error sending sample audio: ${error.message}`
-      });
-    }
-  }
-}
 
 // Helper: Send JSON message
 function jsonSend(ws, obj) {
   if (isOpen(ws)) {
+    console.log("hii?", obj);
     ws.send(JSON.stringify(obj));
   }
 }
@@ -317,25 +248,3 @@ function jsonSend(ws, obj) {
 function isOpen(ws) {
   return ws && ws.readyState === WebSocket.OPEN;
 }
-
-// Handle process termination
-process.on('SIGINT', () => {
-  console.log('Shutting down server...');
-  
-  // Close all connections
-  if (session.openaiConn) {
-    session.openaiConn.close();
-    session.openaiConn = null;
-  }
-  
-  if (session.frontendConn) {
-    session.frontendConn.close();
-    session.frontendConn = null;
-  }
-  
-  // Close server
-  wss.close(() => {
-    console.log('Server shutdown complete');
-    process.exit(0);
-  });
-});
