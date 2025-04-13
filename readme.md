@@ -60,4 +60,12 @@ OPENAI_API_KEY=your_openai_api_key
 ```
 ⚠️ Never commit your `.env` file to version control.
 
+### Instructions
+
+1. **Connect to WebSocket**: Press the "Connect" button to establish a connection with the WebSocket. This should be done first before any other actions.
+
+2. **Play Sample Audio**: Press the "Play Sample" button to send the sample audio.
+
+3. **Record Audio**: Press the mic button to start recording. Press it again to stop recording and send the audio.
+
 ![70005](https://github.com/user-attachments/assets/6b14395e-579a-40f1-b4dc-1214f76c97e2)
