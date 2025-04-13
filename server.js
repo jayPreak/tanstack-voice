@@ -196,10 +196,10 @@ wss.on("connection", (ws) => {
           openAiWs.send(JSON.stringify(eventToSend));
           console.log("Sample audio sent to OpenAI");
 
-        case "start":
-          session.streamSid = data.start.streamSid;
-          console.log("Incoming stream has started", session.streamSid);
-          break;
+        // case "start":
+        //   session.streamSid = data.start.streamSid;
+        //   console.log("Incoming stream has started", session.streamSid);
+        //   break;
         default:
           console.log("Received non-media event:", data.type);
           break;
