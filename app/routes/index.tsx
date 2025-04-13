@@ -34,6 +34,17 @@ function WebSocketTest() {
         filename: "harvard.wav",
       })
     );
+    setMessages((prev) => [
+      ...prev,
+      {
+        type: "user",
+        content: "Playing harvard.wav",
+        timestamp: new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+      },
+    ]);
   };
 
   const connect = () => {
@@ -328,7 +339,17 @@ function WebSocketTest() {
                         {msg.timestamp}
                       </span>
                     </div>
-                    <p className="text-white text-sm">{msg.content}</p>
+                    {msg.content === "audio" ? (
+                      <div className="mt-2">
+                        <audio
+                          className="w-64 h-10"
+                          controls
+                          src={audioUrl || undefined}
+                        />
+                      </div>
+                    ) : (
+                      <p className="text-white text-sm">{msg.content}</p>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-1">
@@ -338,7 +359,16 @@ function WebSocketTest() {
                         {msg.timestamp}
                       </span>
                     </div>
-                    {msg.content === "audio" ? (
+                    {msg.content === "Playing harvard.wav" ? (
+                      <div className="mt-2">
+                        <p className="text-white text-sm mb-2">Sample Audio</p>
+                        <audio
+                          className="w-64 h-10"
+                          controls
+                          src="/public/harvard.wav"
+                        />
+                      </div>
+                    ) : msg.content === "audio" ? (
                       <div className="mt-2">
                         <audio
                           className="w-64 h-10"
