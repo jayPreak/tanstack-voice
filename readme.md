@@ -59,3 +59,5 @@ The application requires an OpenAI API key to function. Make sure to:
 OPENAI_API_KEY=your_openai_api_key
 ```
 ⚠️ Never commit your `.env` file to version control.
+
+![70005](https://github.com/user-attachments/assets/6b14395e-579a-40f1-b4dc-1214f76c97e2)
