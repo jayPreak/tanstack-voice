@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState, useEffect, useRef } from "react";
 import { Button } from "../components/button";
-import { Card, CardContent } from "../components/card";
 import { Mic, MicOff, Play, RotateCw } from "lucide-react";
 
 export const Route = createFileRoute("/")({
@@ -15,6 +14,7 @@ function WebSocketTest() {
   const [isRecording, setIsRecording] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const [isAiTyping, setIsAiTyping] = useState(false); // New state for AI typing indicator
   const [messages, setMessages] = useState<
     Array<{ type: string; content: string; timestamp: string }>
   >([
@@ -24,8 +24,10 @@ function WebSocketTest() {
       timestamp: "04:24 PM",
     },
   ]);
+  const [isLoading, setIsLoading] = useState(false);
 
   const sendPlay = () => {
+    setIsLoading(true);
     wsRef.current?.send(
       JSON.stringify({
         type: "play_sample",
@@ -50,26 +52,18 @@ function WebSocketTest() {
         console.log({ data });
 
         if (data.event === "media" && data.media && data.media.payload) {
-          setResponse(data.media.payload);
-          setStatus("Received media payload!");
+          setIsLoading(false);
+          setIsAiTyping(true);
 
-          // Add message to chat
-          setMessages((prev) => [
-            ...prev,
-            {
-              type: "assistant",
-              content: data.media.payload,
-              timestamp: new Date().toLocaleTimeString([], {
-                hour: "2-digit",
-                minute: "2-digit",
-              }),
-            },
-          ]);
+          setTimeout(() => {
+            setResponse(data.media.payload);
+            setStatus("Received media payload!");
+            setIsAiTyping(false);
+          }, 1500);
         } else if (data.type === "message") {
           setResponse(data.message);
           setStatus("Received message");
 
-          // Add message to chat
           setMessages((prev) => [
             ...prev,
             {
@@ -121,7 +115,6 @@ function WebSocketTest() {
         const url = URL.createObjectURL(audioBlob);
         setAudioUrl(url);
 
-        // Add user audio message to chat
         setMessages((prev) => [
           ...prev,
           {
@@ -133,6 +126,8 @@ function WebSocketTest() {
             }),
           },
         ]);
+
+        setIsAiTyping(true);
 
         const reader = new FileReader();
 
@@ -165,23 +160,55 @@ function WebSocketTest() {
     }
   };
 
-  useEffect(() => {
-    // Add a simulated response on first load for demo purposes
-    setTimeout(() => {
-      setMessages((prev) => [
-        ...prev,
-        {
-          type: "assistant",
-          content: "I'm an AI assistant. This is a simulated response!",
-          timestamp: "04:24 PM",
-        },
-      ]);
-    }, 1000);
-  }, []);
+  const TypingIndicator = () => (
+    <div className="flex justify-start">
+      <div className="max-w-[70%] bg-slate-800 rounded-tl-none rounded-2xl p-4 backdrop-blur-lg bg-opacity-80 shadow-lg">
+        <div className="space-y-1">
+          <div className="flex items-center space-x-2">
+            <div className="bg-indigo-500 rounded-full p-1">
+              <svg
+                className="w-4 h-4 text-white"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke="currentColor"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2"
+                  d="M12 2L4 6V18L12 22L20 18V6L12 2Z"
+                ></path>
+              </svg>
+            </div>
+            <span className="text-xs text-slate-400">AI Assistant</span>
+            <span className="text-xs text-slate-500">
+              {new Date().toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </span>
+          </div>
+          <div className="flex space-x-2">
+            <div
+              className="w-2 h-2 bg-slate-500 rounded-full animate-bounce"
+              style={{ animationDelay: "0ms" }}
+            ></div>
+            <div
+              className="w-2 h-2 bg-slate-500 rounded-full animate-bounce"
+              style={{ animationDelay: "200ms" }}
+            ></div>
+            <div
+              className="w-2 h-2 bg-slate-500 rounded-full animate-bounce"
+              style={{ animationDelay: "400ms" }}
+            ></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="flex flex-col h-screen bg-slate-900 text-white">
-      {/* Header */}
       <div className="border-b border-slate-700 p-4">
         <div className="flex items-center space-x-3 max-w-6xl mx-auto">
           <div className="bg-indigo-500 rounded-full p-2">
@@ -236,7 +263,25 @@ function WebSocketTest() {
               Connect
             </Button>
             <Button variant="outline" size="sm" onClick={sendPlay}>
-              <Play className="w-4 h-4 mr-2" />
+              {isLoading ? (
+                <svg className="animate-spin h-4 w-4 mr-2" viewBox="0 0 24 24">
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  ></circle>
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+                  ></path>
+                </svg>
+              ) : (
+                <Play className="w-4 h-4 mr-2" />
+              )}
               Play Sample
             </Button>
           </div>
@@ -296,7 +341,7 @@ function WebSocketTest() {
                     {msg.content === "audio" ? (
                       <div className="mt-2">
                         <audio
-                          className="w-full h-10"
+                          className="w-64 h-10"
                           controls
                           src={audioUrl || undefined}
                         />
@@ -309,24 +354,20 @@ function WebSocketTest() {
               </div>
             </div>
           ))}
+
+          {isAiTyping && <TypingIndicator />}
         </div>
       </div>
 
-      {/* Footer with Input */}
       <div className="border-t border-slate-700 p-4">
         <div className="max-w-6xl mx-auto">
           <div className="flex items-center relative">
             <div className="relative flex-1">
-              <input
-                type="text"
-                className="w-full bg-slate-800 text-white rounded-full py-3 px-5 pr-12 border border-slate-700 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none"
-                placeholder="Type your message..."
-              />
               <Button
                 variant={isRecording ? "destructive" : "ghost"}
                 size="icon"
                 onClick={isRecording ? stopRecording : startRecording}
-                className="absolute right-2 top-1/2 transform -translate-y-1/2"
+                className="w-full bg-indigo-600 rounded-full py-3 px-5 pr-12"
               >
                 {isRecording ? (
                   <MicOff className="h-5 w-5" />
@@ -335,24 +376,6 @@ function WebSocketTest() {
                 )}
               </Button>
             </div>
-            <Button
-              className="ml-2 rounded-full w-10 h-10 flex-shrink-0 bg-indigo-600 hover:bg-indigo-700"
-              size="icon"
-            >
-              <svg
-                className="h-5 w-5"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
-                />
-              </svg>
-            </Button>
           </div>
         </div>
       </div>
