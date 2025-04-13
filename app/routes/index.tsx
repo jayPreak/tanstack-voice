@@ -217,6 +217,10 @@ function WebSocketTest() {
       </div>
     </div>
   );
+  const audioSrc = process.env.VERCEL_ENV
+    ? "harvard.wav"
+    : "/public/harvard.wav";
+  console.log({ audioSrc, processEnv: process.env.VERCEL_ENV });
 
   return (
     <div className="flex flex-col h-screen bg-slate-900 text-white">
@@ -362,11 +366,7 @@ function WebSocketTest() {
                     {msg.content === "Playing harvard.wav" ? (
                       <div className="mt-2">
                         <p className="text-white text-sm mb-2">Sample Audio</p>
-                        <audio
-                          className="w-64 h-10"
-                          controls
-                          src="/public/harvard.wav"
-                        />
+                        <audio className="w-64 h-10" controls src={audioSrc} />
                       </div>
                     ) : msg.content === "audio" ? (
                       <div className="mt-2">
