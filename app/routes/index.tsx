@@ -24,7 +24,8 @@ function WebSocketTest() {
 
   const connect = () => {
     setStatus("Connecting...");
-    const ws = new WebSocket("ws://localhost:8080");
+    const wsUrl = import.meta.env.VITE_WEBSOCKET_URL || "ws://localhost:8080";
+    const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
     ws.onopen = () => {

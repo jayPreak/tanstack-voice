@@ -19,8 +19,9 @@ const LOG_EVENT_TYPES = [
   "conversation.item.input_audio_transcription.completed",
 ];
 
-const wss = new WebSocketServer({ port: 8080 });
-console.log("WebSocket server started on port 8080");
+const port = process.env.PORT || 8080;
+const wss = new WebSocketServer({ port });
+console.log(`WebSocket server started on port ${port}`);
 
 let session = {
   frontendConn: null,
