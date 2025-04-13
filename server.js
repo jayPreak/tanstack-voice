@@ -3,10 +3,17 @@ import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
 import decodeAudio from "audio-decode";
+import { fileURLToPath } from "url";
+import { dirname } from "path";
+import { OpenAI } from "openai";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 dotenv.config();
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
 const LOG_EVENT_TYPES = [
   "response.content.done",
@@ -20,7 +27,7 @@ const LOG_EVENT_TYPES = [
   "conversation.item.input_audio_transcription.completed",
 ];
 
-export function floatTo16BitPCM(float32Array) {
+function floatTo16BitPCM(float32Array) {
   const buffer = new ArrayBuffer(float32Array.length * 2);
   const view = new DataView(buffer);
   let offset = 0;
@@ -31,7 +38,7 @@ export function floatTo16BitPCM(float32Array) {
   return buffer;
 }
 
-export function base64EncodeAudio(float32Array) {
+function base64EncodeAudio(float32Array) {
   const arrayBuffer = floatTo16BitPCM(float32Array);
   let binary = "";
   let bytes = new Uint8Array(arrayBuffer);
@@ -56,6 +63,7 @@ let session = {
 };
 
 wss.on("connection", (ws) => {
+  let fileCounter = 0;
   console.log("Frontend client connected");
 
   // Store frontend connection
@@ -163,31 +171,10 @@ wss.on("connection", (ws) => {
 
       switch (data.type) {
         case "play_sample":
-          // const filePath = path.join(process.cwd(), "public", "harvard.wav");
-          // console.log(`Reading sample audio from ${filePath}`);
-
-          // const audioData = fs.readFileSync(filePath);
-          // const base64Audio = audioData.toString("base64");
-
-          // console.log("Sending full audio message to OpenAI...");
-          // const event = {
-          //   type: "conversation.item.create",
-          //   item: {
-          //     type: "message",
-          //     role: "user",
-          //     content: [
-          //       {
-          //         type: "input_audio",
-          //         // type: "input_text",
-          //         audio: base64Audio,
-          //         // text: "Hiiii can you please respond to this I like peanut butter a lot and we can have a peanut butter and jelly sandwich :D",
-          //       },
-          //     ],
-          //   },
-          // };
-
           for (const filename of files) {
+            console.log("Playing sample:", filename);
             const audioFile = fs.readFileSync(filename);
+            console.log({ audioFile });
             const audioBuffer = await decodeAudio(audioFile);
             const channelData = audioBuffer.getChannelData(0);
             const base64Chunk = base64EncodeAudio(channelData);
@@ -200,15 +187,33 @@ wss.on("connection", (ws) => {
           }
 
           openAiWs.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
-          // openAiWs.send(JSON.stringify({ type: "response.create" }));
-          // openAiWs.send(JSON.stringify(event));
           console.log("Sample audio sent to OpenAI");
           break;
         case "send_audio":
           console.log({ data });
-          const audioString = data.audio;
+          const audioBuffer = Buffer.from(data.audio, "base64");
+          const tempPath = path.join(__dirname, "temp.webm");
+          fs.writeFileSync(tempPath, audioBuffer);
 
-          console.log("Sending full audio message to OpenAI...");
+          const transcription = await openai.audio.transcriptions.create({
+            file: fs.createReadStream(tempPath),
+            model: "whisper-1",
+            response_format: "text",
+          });
+
+          fs.unlinkSync(tempPath);
+
+          console.log({ transcription });
+          // openAiWs.send(
+          //   JSON.stringify({
+          //     type: "input_audio_buffer.append",
+          //     audio: base64Chunk,
+          //   })
+          // );
+
+          // openAiWs.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+
+          // console.log("Sending full audio message to OpenAI...");
           const eventToSend = {
             type: "conversation.item.create",
             item: {
@@ -216,14 +221,14 @@ wss.on("connection", (ws) => {
               role: "user",
               content: [
                 {
-                  type: "input_audio",
-                  audio: audioString,
+                  type: "input_text",
+                  text: transcription,
                 },
               ],
             },
           };
           openAiWs.send(JSON.stringify(eventToSend));
-          console.log("Sample audio sent to OpenAI");
+          console.log("Recorded Aaudio sent to OpenAI");
         case "start":
           session.streamSid = data.start.streamSid;
           console.log("Incoming stream has started", session.streamSid);

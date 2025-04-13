@@ -26,6 +26,25 @@ function WebSocketTest() {
   ]);
   const [isLoading, setIsLoading] = useState(false);
 
+  const getPreferredAudioFormat = (): { mimeType: string; format: string } => {
+    const candidates = [
+      { mimeType: "audio/webm;codecs=opus", format: "webm" },
+      { mimeType: "audio/mp4", format: "m4a" },
+      { mimeType: "audio/ogg;codecs=opus", format: "ogg" },
+    ];
+
+    for (const candidate of candidates) {
+      if (
+        typeof MediaRecorder !== "undefined" &&
+        MediaRecorder.isTypeSupported(candidate.mimeType)
+      ) {
+        return candidate;
+      }
+    }
+
+    return { mimeType: "audio/mp4", format: "m4a" }; // Common fallback
+  };
+
   const sendPlay = () => {
     setIsLoading(true);
     wsRef.current?.send(
@@ -122,7 +141,10 @@ function WebSocketTest() {
       };
 
       mediaRecorder.onstop = () => {
-        const audioBlob = new Blob(audioChunks, { type: "audio/wav" });
+        const { format: recordedFormat } = getPreferredAudioFormat();
+        const recordedMimeType =
+          mediaRecorderRef.current?.mimeType || `audio/${recordedFormat}`;
+        const audioBlob = new Blob(audioChunks, { type: recordedMimeType });
         const url = URL.createObjectURL(audioBlob);
         setAudioUrl(url);
 
@@ -141,18 +163,21 @@ function WebSocketTest() {
         setIsAiTyping(true);
 
         const reader = new FileReader();
-
-        reader.onloadend = () => {
-          const base64Audio = reader.result?.split(",")[1]; // Remove data URL prefix
-          // Send base64Audio to backend via WebSocket
-          wsRef.current?.send(
-            JSON.stringify({
-              type: "send_audio",
-              audio: base64Audio,
-            })
-          );
-        };
         reader.readAsDataURL(audioBlob);
+        reader.onloadend = () => {
+          if (typeof reader.result === "string") {
+            const base64Audio = reader.result.split(",")[1];
+            // Call sendMessage with audio data and the placeholder ID
+            wsRef.current?.send(
+              JSON.stringify({
+                type: "send_audio",
+                audio: base64Audio,
+              })
+            );
+          } else {
+            console.log("Failed to read audio blob as base64 data URL.");
+          }
+        };
 
         stream.getTracks().forEach((track) => track.stop());
       };
