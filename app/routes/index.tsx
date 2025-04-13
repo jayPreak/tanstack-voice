@@ -217,8 +217,6 @@ function WebSocketTest() {
       </div>
     </div>
   );
-  const vercel = import.meta.env.VITE_VERCEL_ENV;
-  const audioSrc = vercel ? "harvard.wav" : "/public/harvard.wav";
 
   return (
     <div className="flex flex-col h-screen bg-slate-900 text-white">
@@ -364,7 +362,11 @@ function WebSocketTest() {
                     {msg.content === "Playing harvard.wav" ? (
                       <div className="mt-2">
                         <p className="text-white text-sm mb-2">Sample Audio</p>
-                        <audio className="w-64 h-10" controls src={audioSrc} />
+                        <audio
+                          className="w-64 h-10"
+                          controls
+                          src={"harvard.wav"}
+                        />
                       </div>
                     ) : msg.content === "audio" ? (
                       <div className="mt-2">
