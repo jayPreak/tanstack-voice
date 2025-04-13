@@ -1,10 +1,12 @@
-// server.js - Minimal OpenAI Realtime WebSocket server
 import { WebSocketServer, WebSocket } from "ws";
 import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
+
 dotenv.config();
+
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+
 const LOG_EVENT_TYPES = [
   "response.content.done",
   "rate_limits.updated",
@@ -16,17 +18,16 @@ const LOG_EVENT_TYPES = [
   "response.text.done",
   "conversation.item.input_audio_transcription.completed",
 ];
+
 const wss = new WebSocketServer({ port: 8080 });
 console.log("WebSocket server started on port 8080");
 
-// Single session for simplicity
 let session = {
   frontendConn: null,
   openaiConn: null,
   isConnecting: false,
 };
 
-// Handle new connections from frontend
 wss.on("connection", (ws) => {
   console.log("Frontend client connected");
 
@@ -85,8 +86,10 @@ wss.on("connection", (ws) => {
           message.response.output[0]?.content?.find(
             (content) => content.transcript
           )?.transcript || "Agent message not found";
+
         session.transcript += `Agent: ${agentMessage}\n`;
         console.log(`Agent (${session.id}): ${agentMessage}`);
+
         jsonSend(ws, {
           type: "message",
           message: agentMessage,
@@ -112,12 +115,9 @@ wss.on("connection", (ws) => {
         openAiWs.send(JSON.stringify(responseCreateEvent));
       }
       if (message.type !== "response.audio.delta") {
-        console.log("fuck");
-        console.log({ message });
         console.log(`OpenAI event:`, message.type);
         console.log(JSON.stringify(message, null, 2));
       }
-      console.log("hiiiiii what", message.type);
     } catch (error) {
       console.error(
         "Error processing OpenAI message:",
@@ -135,16 +135,6 @@ wss.on("connection", (ws) => {
       console.log(`Received from frontend:`, data.type);
 
       switch (data.type) {
-        case "media":
-          if (openAiWs.readyState === WebSocket.OPEN) {
-            const audioAppend = {
-              type: "input_audio_buffer.append",
-              audio: data.media.payload,
-            };
-
-            openAiWs.send(JSON.stringify(audioAppend));
-          }
-          break;
         case "play_sample":
           const filePath = path.join(process.cwd(), "public", "harvard.wav");
           console.log(`Reading sample audio from ${filePath}`);
@@ -197,9 +187,7 @@ wss.on("connection", (ws) => {
               content: [
                 {
                   type: "input_audio",
-                  // type: "input_text",
                   audio: audioString,
-                  // text: "Hiiii can you please respond to this I like peanut butter a lot :D",
                 },
               ],
             },
@@ -207,12 +195,6 @@ wss.on("connection", (ws) => {
           openAiWs.send(JSON.stringify(eventToSend));
           console.log("Sample audio sent to OpenAI");
 
-        // if (session.frontendConn && isOpen(session.frontendConn)) {
-        //   jsonSend(session.frontendConn, {
-        //     type: "system",
-        //     message: "Sample audio sent to OpenAI",
-        //   });
-        // }
         case "start":
           session.streamSid = data.start.streamSid;
           console.log("Incoming stream has started", session.streamSid);

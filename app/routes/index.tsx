@@ -1,4 +1,3 @@
-// app/routes/index.tsx
 import { createFileRoute } from "@tanstack/react-router";
 import { useState, useEffect, useRef } from "react";
 
@@ -25,24 +24,19 @@ function WebSocketTest() {
 
   const connect = () => {
     setStatus("Connecting...");
-
-    // Create WebSocket connection
     const ws = new WebSocket("ws://localhost:8080");
     wsRef.current = ws;
 
-    // Connection opened
     ws.onopen = () => {
       setStatus("Connected! Sending sample request...");
     };
 
-    // Listen for messages
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
         console.log({ data });
         console.log("fuck");
 
-        // Display the payload if it's a media event
         if (data.event === "media" && data.media && data.media.payload) {
           setResponse(data.media.payload);
           setStatus("Received media payload!");
@@ -64,13 +58,10 @@ function WebSocketTest() {
       }
     };
 
-    // Handle errors
     ws.onerror = (error) => {
       console.error("WebSocket error:", error);
       setStatus("Connection error");
     };
-
-    // Handle connection close
     ws.onclose = () => {
       setStatus("Disconnected");
     };
@@ -98,7 +89,7 @@ function WebSocketTest() {
         const reader = new FileReader();
         reader.readAsDataURL(audioBlob);
         reader.onloadend = () => {
-          const base64Audio = reader.result.split(",")[1]; // Remove the data URL part
+          const base64Audio = reader.result?.split(",")[1]; // Remove the data URL part
           console.log("Base64 Audio:", base64Audio);
           wsRef.current?.send(
             JSON.stringify({
@@ -108,7 +99,6 @@ function WebSocketTest() {
           );
         };
 
-        // Stop all tracks
         stream.getTracks().forEach((track) => track.stop());
       };
 
